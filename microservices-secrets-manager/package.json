@@ -1,0 +1,20 @@
+{
+  "name": "taxicrm-microservice-secrets",
+  "version": "0.0.0",
+  "private": true,
+  "scripts": {
+    "deploy": "wrangler deploy",
+    "postdeploy": "read -p '\n👀 Suivre les logs maintenant ? (y/N) ' choice && if [[ $choice =~ ^[Yy]$ ]]; then while true; do read -p '📍 Indiquez la route à filtrer (laisser vide pour toutes, Q pour quitter) : ' route; if [[ \"$route\" == \"Q\" || \"$route\" == \"q\" ]]; then echo '\n🚪 Sortie du mode suivi des logs.'; break; elif [[ -n \"$route\" ]]; then echo '\n📡 Suivi des logs pour la route : [ROUTE:'$route']\n🔴 Appuyez sur CTRL + C pour arrêter ou pour changer de route.'; wrangler tail --search \"[ROUTE:$route]\"; else echo '\n📡 Suivi des logs pour toutes les routes\n🔴 Appuyez sur CTRL + C pour arrêter ou pour changer de route.'; wrangler tail; fi; done; fi",
+    "dev": "wrangler dev",
+    "start": "wrangler dev",
+    "wizard": "npm install && node src/setupWizard.js"
+  },
+  "devDependencies": {
+    "wrangler": "^3.109.2"
+  },
+  "type": "module",
+  "dependencies": {
+    "chalk": "^5.4.1",
+    "inquirer": "^12.4.2"
+  }
+}

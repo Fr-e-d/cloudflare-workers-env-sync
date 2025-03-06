@@ -1,0 +1,22 @@
+name = "wrangler-client"
+main = "src/index.js"
+account_id = ""
+compatibility_date = "2025-02-14"
+compatibility_flags = ["nodejs_compat"]
+
+# Development is the Default environment
+[vars]
+WORKER_ENV = "development"
+
+[env.staging]
+workers_dev = true
+
+[env.staging.vars]
+WORKER_ENV = "staging"
+
+[env.production.vars]
+WORKER_ENV = "production"
+
+[limits]
+cpu_ms = 8000
+

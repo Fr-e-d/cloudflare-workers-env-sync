@@ -1,0 +1,15 @@
+name = "microservices-secrets-manager"
+main = "src/index.js"
+compatibility_date = "2025-02-14"
+compatibility_flags = ["nodejs_compat"]
+
+# Account ID 
+account_id = ""
+
+# KV Namespace binding for rate limiting
+[[kv_namespaces]]
+binding = "USER_RATE_LIMIT_KV"
+id = ""
+
+# Environment variables (non-sensitive)
+[vars]

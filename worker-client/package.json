@@ -1,0 +1,21 @@
+{
+  "name": "microservice-client",
+  "version": "0.0.0",
+  "private": true,
+  "scripts": {
+    "deploy": "wrangler deploy",
+    "dev": "wrangler dev",
+    "start": " wrangler dev",
+    "apply-secrets": "npm install && node src/configs/setSecrets.js",
+    "apply-secrets:dev": "npm install && node src/configs/setSecrets.js --env development",
+    "apply-secrets:staging": "npm install && node src/configs/setSecrets.js --env staging",
+    "apply-secrets:prod": "npm install && node src/configs/setSecrets.js --env production"
+  },
+  "devDependencies": {
+    "wrangler": "^3.109.2"
+  },
+  "type": "module",
+  "dependencies": {
+    "prompt-sync": "^4.2.0"
+  }
+}
