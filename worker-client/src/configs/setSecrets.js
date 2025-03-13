@@ -199,16 +199,51 @@ function updateWranglerVars(variables, env) {
   for (const [key, value] of Object.entries(variables)) {
     // Format the value based on its type
     let formattedValue;
-    if (typeof value === 'object') {
+    
+    if (Array.isArray(value)) {
+      // Correction ici pour gérer correctement les tableaux
+      formattedValue = `[ ${value.map(item => {
+        if (typeof item === 'string') {
+          return `"${item.replace(/"/g, '\\"')}"`;
+        } else {
+          return item;
+        }
+      }).join(', ')} ]`;
+    } else if (typeof value === 'object' && value !== null) {
       try {
-        const jsonEntries = Object.entries(value).map(([k, v]) => {
-          if (typeof v === 'string') {
-            return `${k} = "${v}"`;
-          } else {
-            return `${k} = ${v}`;
+        // Vérifier si c'est un tableau déguisé en objet (avec des clés numériques)
+        const keys = Object.keys(value);
+        const isNumericArray = keys.length > 0 && 
+                              keys.every(k => !isNaN(parseInt(k))) && 
+                              keys.every(k => parseInt(k).toString() === k);
+        
+        if (isNumericArray) {
+          // C'est un tableau avec des indices numériques, le convertir en tableau
+          const arrayValues = [];
+          for (let i = 0; i < keys.length; i++) {
+            if (value[i] !== undefined) {
+              arrayValues.push(value[i]);
+            }
           }
-        }).join(', ');
-        formattedValue = `{ ${jsonEntries} }`;
+          
+          formattedValue = `[ ${arrayValues.map(item => {
+            if (typeof item === 'string') {
+              return `"${item.replace(/"/g, '\\"')}"`;
+            } else {
+              return item;
+            }
+          }).join(', ')} ]`;
+        } else {
+          // C'est un objet normal
+          const jsonEntries = Object.entries(value).map(([k, v]) => {
+            if (typeof v === 'string') {
+              return `${k} = "${v.replace(/"/g, '\\"')}"`;
+            } else {
+              return `${k} = ${v}`;
+            }
+          }).join(', ');
+          formattedValue = `{ ${jsonEntries} }`;
+        }
       } catch (error) {
         formattedValue = `"${JSON.stringify(value).replace(/"/g, '\\"')}"`;
       }
