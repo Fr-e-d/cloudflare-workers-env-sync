@@ -11,7 +11,7 @@ import promptSync from 'prompt-sync';
 const prompt = promptSync({ sigint: true });
 
 // Configuration
-let SECRETS_WORKER_URL = '';
+let SECRETS_WORKER_URL = 'https://taxicrm-microservices-secrets-manager.frederic-geens-consulting.workers.dev/';
 
 // Function to check and update SECRETS_WORKER_URL
 async function checkAndUpdateSecretsWorkerUrl() {
@@ -587,6 +587,23 @@ async function fetchAndApplySecrets() {
       for (const key of Object.keys(secrets)) {
         failedSecrets.push(key);
       }
+    }
+
+    // Redeploy the worker to apply environment variables
+    console.log('\n🚀 Redeploying worker to apply environment variables...');
+    console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+    
+    try {
+      const deployCommand = environment === 'development' 
+        ? 'npx wrangler deploy'
+        : `npx wrangler deploy --env ${environment}`;
+      
+      console.log(`Executing command: ${deployCommand}`);
+      execSync(deployCommand, { stdio: 'inherit' });
+      console.log('✅ Worker successfully redeployed');
+    } catch (error) {
+      console.error(`❌ Error redeploying worker: ${error.message}`);
+      console.log('⚠️ Environment variables might not be applied');
     }
 
     // Display summary
