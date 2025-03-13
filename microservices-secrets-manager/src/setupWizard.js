@@ -6,6 +6,166 @@ import fs from 'fs';
 import path from 'path';
 import { spawn } from 'child_process';
 
+// Modifier la fonction parseWranglerToml pour gérer correctement les tableaux
+function parseWranglerToml() {
+  const wranglerTomlPath = path.join(process.cwd(), 'wrangler.toml');
+  let config = {
+    name: "microservices-secrets-manager", // Valeur par défaut
+    main: "src/index.js",
+    compatibility_date: "2025-02-14",
+    compatibility_flags: ["nodejs_compat"],
+    vars: {}
+  };
+  
+  if (fs.existsSync(wranglerTomlPath)) {
+    try {
+      const content = fs.readFileSync(wranglerTomlPath, 'utf8');
+      
+      // Extraire le nom du projet
+      const nameMatch = content.match(/name\s*=\s*"([^"]+)"/);
+      if (nameMatch && nameMatch[1]) {
+        config.name = nameMatch[1];
+      }
+      
+      // Extraire le fichier principal
+      const mainMatch = content.match(/main\s*=\s*"([^"]+)"/);
+      if (mainMatch && mainMatch[1]) {
+        config.main = mainMatch[1];
+      }
+      
+      // Extraire la date de compatibilité
+      const compatDateMatch = content.match(/compatibility_date\s*=\s*"([^"]+)"/);
+      if (compatDateMatch && compatDateMatch[1]) {
+        config.compatibility_date = compatDateMatch[1];
+      }
+      
+      // Extraire les drapeaux de compatibilité
+      const compatFlagsMatch = content.match(/compatibility_flags\s*=\s*\[(.*?)\]/s);
+      if (compatFlagsMatch && compatFlagsMatch[1]) {
+        config.compatibility_flags = compatFlagsMatch[1]
+          .split(',')
+          .map(flag => flag.trim().replace(/"/g, ''))
+          .filter(flag => flag);
+      }
+      
+      // Extraire l'ID de compte
+      const accountIdMatch = content.match(/account_id\s*=\s*"([^"]+)"/);
+      if (accountIdMatch && accountIdMatch[1]) {
+        config.account_id = accountIdMatch[1];
+      }
+      
+      // Extraire la configuration KV Namespace
+      const kvNamespaceMatch = content.match(/\[\[kv_namespaces\]\]\s*binding\s*=\s*"([^"]+)"\s*id\s*=\s*"([^"]+)"/);
+      if (kvNamespaceMatch && kvNamespaceMatch[1] && kvNamespaceMatch[2]) {
+        config.kv_namespace = {
+          binding: kvNamespaceMatch[1],
+          id: kvNamespaceMatch[2]
+        };
+      }
+      
+      // Extraire les variables d'environnement existantes
+      // Préserver le contenu original de la section [vars]
+      const varsMatch = content.match(/\[vars\]([\s\S]*?)(\[\[.*?\]\]|\[.*?\](?!\s*=)|$)/);
+      if (varsMatch && varsMatch[1]) {
+        config.varsRaw = varsMatch[1];
+      }
+      
+      console.log(chalk.green('✓ Configuration existante lue avec succès.'));
+    } catch (error) {
+      console.log(chalk.yellow(`Erreur lors de la lecture de wrangler.toml: ${error.message}`));
+    }
+  } else {
+    console.log(chalk.yellow('Le fichier wrangler.toml n\'existe pas encore, utilisation des valeurs par défaut.'));
+  }
+  
+  return config;
+}
+
+// Modifier la fonction generateWranglerToml pour préserver le format des variables
+function generateWranglerToml(config) {
+  let content = `name = "${config.name}"
+main = "${config.main}"
+compatibility_date = "${config.compatibility_date}"
+compatibility_flags = [${config.compatibility_flags.map(flag => `"${flag}"`).join(', ')}]
+`;
+
+  // Ajouter l'ID de compte s'il existe
+  if (config.account_id) {
+    content += `\n# Account ID (IMPORTANT - DO NOT DELETE)
+account_id = "${config.account_id}"\n`;
+  }
+  
+  // Ajouter la configuration KV Namespace si elle existe
+  if (config.kv_namespace) {
+    content += `\n# KV Namespace binding for rate limiting
+[[kv_namespaces]]
+binding = "${config.kv_namespace.binding}"
+id = "${config.kv_namespace.id}"\n`;
+  }
+  
+  // Ajouter les variables d'environnement en préservant le format original
+  if (config.varsRaw) {
+    content += `\n# Environment variables (non-sensitive)
+[vars]${config.varsRaw}`;
+  } else if (Object.keys(config.vars || {}).length > 0) {
+    content += `\n# Environment variables (non-sensitive)
+[vars]\n`;
+    
+    for (const [key, value] of Object.entries(config.vars)) {
+      content += `${key} = "${value}"\n`;
+    }
+  }
+  
+  return content;
+}
+
+// Modifier la fonction updateWranglerToml pour préserver les variables existantes
+function updateWranglerToml(updates) {
+  const wranglerTomlPath = path.join(process.cwd(), 'wrangler.toml');
+  
+  // Lire la configuration existante
+  const existingConfig = parseWranglerToml();
+  
+  // Fusionner avec les mises à jour
+  const updatedConfig = {
+    ...existingConfig,
+    ...updates
+  };
+  
+  // Si nous avons des mises à jour de variables et que nous avons déjà des variables existantes
+  if (updates.vars && existingConfig.varsRaw) {
+    // Nous allons mettre à jour les variables spécifiques dans le contenu brut
+    let varsRaw = existingConfig.varsRaw;
+    
+    for (const [key, value] of Object.entries(updates.vars)) {
+      // Vérifier si la variable existe déjà
+      const varRegex = new RegExp(`(^|\\n)\\s*${key}\\s*=\\s*"[^"]*"`, 'g');
+      if (varRegex.test(varsRaw)) {
+        // Remplacer la valeur existante
+        varsRaw = varsRaw.replace(varRegex, `$1${key} = "${value}"`);
+      } else {
+        // Ajouter la nouvelle variable
+        varsRaw += `\n${key} = "${value}"`;
+      }
+    }
+    
+    updatedConfig.varsRaw = varsRaw;
+  }
+  
+  // Générer le nouveau contenu
+  const tomlContent = generateWranglerToml(updatedConfig);
+  
+  // Écrire le fichier
+  try {
+    fs.writeFileSync(wranglerTomlPath, tomlContent, 'utf8');
+    console.log(chalk.green('✓ Fichier wrangler.toml mis à jour avec succès.'));
+    return true;
+  } catch (error) {
+    console.log(chalk.red(`❌ Erreur lors de la mise à jour du fichier wrangler.toml: ${error.message}`));
+    return false;
+  }
+}
+
 async function runSetupWizard() {
   console.log(chalk.blue('Welcome to the Microservices Secrets Manager Setup Wizard!'));
   console.log(chalk.blue('This wizard will guide you through setting up your centralized secrets management system.'));
@@ -172,59 +332,20 @@ async function runSetupWizard() {
         ]);
         
         if (confirmAccountId) {
-          // Add this code to update the wrangler.toml file immediately after confirmation
+          // Remplacer ce bloc de code par :
           try {
-            const wranglerTomlPath = path.join(process.cwd(), 'wrangler.toml');
+            const updateSuccess = updateWranglerToml({
+              account_id: accountId
+            });
             
-            if (fs.existsSync(wranglerTomlPath)) {
-              let tomlContent = fs.readFileSync(wranglerTomlPath, 'utf8');
-              
-              // Check if account_id already exists in the file
-              if (tomlContent.includes('account_id =')) {
-                // Replace existing value
-                tomlContent = tomlContent.replace(/account_id\s*=\s*".*"/g, `account_id = "${accountId}"`);
-              } else {
-                // Add account_id line if it doesn't exist
-                tomlContent += `\n# Account ID\naccount_id = "${accountId}"\n`;
-              }
-              
-              // Write updated content to file
-              fs.writeFileSync(wranglerTomlPath, tomlContent, 'utf8');
-              console.log(chalk.green(`✓ wrangler.toml file updated with Account ID: ${accountId}`));
+            if (updateSuccess) {
+              console.log(chalk.green(`✓ Fichier wrangler.toml mis à jour avec l'ID de compte: ${accountId}`));
             } else {
-              console.log(chalk.yellow(`⚠️ wrangler.toml file doesn't exist. Creating file...`));
-              
-              // Create a new wrangler.toml file with account_id
-              const tomlContent = `name = "microservices-secrets-manager"
-main = "src/index.js"
-compatibility_date = "2025-02-14"
-compatibility_flags = ["nodejs_compat"]
-
-# Account ID
-account_id = "${accountId}"
-
-# Environment variables (non-sensitive)
-[vars]
-# Example variable for development environment
-API_HOST_development = "https://api-dev.example.com"
-# Example variable for staging environment
-API_HOST_staging = "https://api-staging.example.com"
-# Example variable for production environment
-API_HOST_production = "https://api.example.com"
-`;
-              
-              fs.writeFileSync(wranglerTomlPath, tomlContent, 'utf8');
-              console.log(chalk.green(`✓ wrangler.toml file created with Account ID: ${accountId}`));
-            }
-            
-            // Verify that the update was successful
-            const updatedContent = fs.readFileSync(wranglerTomlPath, 'utf8');
-            if (!updatedContent.includes(`account_id = "${accountId}"`)) {
-              throw new Error("wrangler.toml file update failed");
+              throw new Error("La mise à jour du fichier wrangler.toml a échoué");
             }
           } catch (error) {
-            console.error(chalk.red(`❌ Error updating wrangler.toml file: ${error.message}`));
-            console.log(chalk.yellow(`⚠️ Please manually update the wrangler.toml file with your Account ID: ${accountId}`));
+            console.error(chalk.red(`❌ Erreur lors de la mise à jour du fichier wrangler.toml: ${error.message}`));
+            console.log(chalk.yellow(`⚠️ Veuillez mettre à jour manuellement le fichier wrangler.toml avec votre ID de compte: ${accountId}`));
           }
         } else {
           // Offer to reconnect
@@ -281,59 +402,20 @@ API_HOST_production = "https://api.example.com"
         ]);
         
         if (confirmAccountId) {
-          // Add this code to update the wrangler.toml file immediately after confirmation
+          // Remplacer ce bloc de code par :
           try {
-            const wranglerTomlPath = path.join(process.cwd(), 'wrangler.toml');
+            const updateSuccess = updateWranglerToml({
+              account_id: accountId
+            });
             
-            if (fs.existsSync(wranglerTomlPath)) {
-              let tomlContent = fs.readFileSync(wranglerTomlPath, 'utf8');
-              
-              // Check if account_id already exists in the file
-              if (tomlContent.includes('account_id =')) {
-                // Replace existing value
-                tomlContent = tomlContent.replace(/account_id\s*=\s*".*"/g, `account_id = "${accountId}"`);
-              } else {
-                // Add account_id line if it doesn't exist
-                tomlContent += `\n# Account ID\naccount_id = "${accountId}"\n`;
-              }
-              
-              // Write updated content to file
-              fs.writeFileSync(wranglerTomlPath, tomlContent, 'utf8');
-              console.log(chalk.green(`✓ wrangler.toml file updated with Account ID: ${accountId}`));
+            if (updateSuccess) {
+              console.log(chalk.green(`✓ Fichier wrangler.toml mis à jour avec l'ID de compte: ${accountId}`));
             } else {
-              console.log(chalk.yellow(`⚠️ wrangler.toml file doesn't exist. Creating file...`));
-              
-              // Create a new wrangler.toml file with account_id
-              const tomlContent = `name = "microservices-secrets-manager"
-main = "src/index.js"
-compatibility_date = "2025-02-14"
-compatibility_flags = ["nodejs_compat"]
-
-# Account ID
-account_id = "${accountId}"
-
-# Environment variables (non-sensitive)
-[vars]
-# Example variable for development environment
-API_HOST_development = "https://api-dev.example.com"
-# Example variable for staging environment
-API_HOST_staging = "https://api-staging.example.com"
-# Example variable for production environment
-API_HOST_production = "https://api.example.com"
-`;
-              
-              fs.writeFileSync(wranglerTomlPath, tomlContent, 'utf8');
-              console.log(chalk.green(`✓ wrangler.toml file created with Account ID: ${accountId}`));
-            }
-            
-            // Verify that the update was successful
-            const updatedContent = fs.readFileSync(wranglerTomlPath, 'utf8');
-            if (!updatedContent.includes(`account_id = "${accountId}"`)) {
-              throw new Error("wrangler.toml file update failed");
+              throw new Error("La mise à jour du fichier wrangler.toml a échoué");
             }
           } catch (error) {
-            console.error(chalk.red(`❌ Error updating wrangler.toml file: ${error.message}`));
-            console.log(chalk.yellow(`⚠️ Please manually update the wrangler.toml file with your Account ID: ${accountId}`));
+            console.error(chalk.red(`❌ Erreur lors de la mise à jour du fichier wrangler.toml: ${error.message}`));
+            console.log(chalk.yellow(`⚠️ Veuillez mettre à jour manuellement le fichier wrangler.toml avec votre ID de compte: ${accountId}`));
           }
         } else {
           // Offer to reconnect
@@ -410,59 +492,20 @@ API_HOST_production = "https://api.example.com"
             accountId = suggestedId;
             console.log(chalk.green(`✓ Account ID set: ${accountId}`));
 
-            // Add this code to update the wrangler.toml file immediately after confirmation
+            // Remplacer ce bloc de code par :
             try {
-              const wranglerTomlPath = path.join(process.cwd(), 'wrangler.toml');
+              const updateSuccess = updateWranglerToml({
+                account_id: accountId
+              });
               
-              if (fs.existsSync(wranglerTomlPath)) {
-                let tomlContent = fs.readFileSync(wranglerTomlPath, 'utf8');
-                
-                // Check if account_id already exists in the file
-                if (tomlContent.includes('account_id =')) {
-                  // Replace existing value
-                  tomlContent = tomlContent.replace(/account_id\s*=\s*".*"/g, `account_id = "${accountId}"`);
-                } else {
-                  // Add account_id line if it doesn't exist
-                  tomlContent += `\n# Account ID\naccount_id = "${accountId}"\n`;
-                }
-                
-                // Write updated content to file
-                fs.writeFileSync(wranglerTomlPath, tomlContent, 'utf8');
-                console.log(chalk.green(`✓ wrangler.toml file updated with Account ID: ${accountId}`));
+              if (updateSuccess) {
+                console.log(chalk.green(`✓ Fichier wrangler.toml mis à jour avec l'ID de compte: ${accountId}`));
               } else {
-                console.log(chalk.yellow(`⚠️ wrangler.toml file doesn't exist. Creating file...`));
-                
-                // Create a new wrangler.toml file with account_id
-                const tomlContent = `name = "microservices-secrets-manager"
-main = "src/index.js"
-compatibility_date = "2025-02-14"
-compatibility_flags = ["nodejs_compat"]
-
-# Account ID
-account_id = "${accountId}"
-
-# Environment variables (non-sensitive)
-[vars]
-# Example variable for development environment
-API_HOST_development = "https://api-dev.example.com"
-# Example variable for staging environment
-API_HOST_staging = "https://api-staging.example.com"
-# Example variable for production environment
-API_HOST_production = "https://api.example.com"
-`;
-                
-                fs.writeFileSync(wranglerTomlPath, tomlContent, 'utf8');
-                console.log(chalk.green(`✓ wrangler.toml file created with Account ID: ${accountId}`));
-              }
-              
-              // Verify that the update was successful
-              const updatedContent = fs.readFileSync(wranglerTomlPath, 'utf8');
-              if (!updatedContent.includes(`account_id = "${accountId}"`)) {
-                throw new Error("wrangler.toml file update failed");
+                throw new Error("La mise à jour du fichier wrangler.toml a échoué");
               }
             } catch (error) {
-              console.error(chalk.red(`❌ Error updating wrangler.toml file: ${error.message}`));
-              console.log(chalk.yellow(`⚠️ Please manually update the wrangler.toml file with your Account ID: ${accountId}`));
+              console.error(chalk.red(`❌ Erreur lors de la mise à jour du fichier wrangler.toml: ${error.message}`));
+              console.log(chalk.yellow(`⚠️ Veuillez mettre à jour manuellement le fichier wrangler.toml avec votre ID de compte: ${accountId}`));
             }
           } else {
             // Offer to reconnect
@@ -710,27 +753,21 @@ API_HOST_production = "https://api.example.com"
   // Update wrangler.toml with the KV Namespace ID
   if (kvNamespaceId) {
     try {
-      const wranglerTomlPath = path.join(process.cwd(), 'wrangler.toml');
-      
-      if (fs.existsSync(wranglerTomlPath)) {
-        let tomlContent = fs.readFileSync(wranglerTomlPath, 'utf8');
-        
-        // Update KV Namespace section
-        if (tomlContent.includes('[[kv_namespaces]]')) {
-          // Replace existing ID
-          tomlContent = tomlContent.replace(/id = "([a-f0-9-]*)"/, `id = "${kvNamespaceId}"`);
-        } else {
-          // Add KV Namespace section if it doesn't exist
-          tomlContent += `\n# KV Namespace binding for rate limiting\n[[kv_namespaces]]\nbinding = "${kvNamespaceName}"\nid = "${kvNamespaceId}"\n`;
+      const updateSuccess = updateWranglerToml({
+        kv_namespace: {
+          binding: kvNamespaceName,
+          id: kvNamespaceId
         }
-        
-        // Write updated content to file
-        fs.writeFileSync(wranglerTomlPath, tomlContent, 'utf8');
-        console.log(chalk.green(`✓ wrangler.toml file updated with KV Namespace ID: ${kvNamespaceId}`));
+      });
+      
+      if (updateSuccess) {
+        console.log(chalk.green(`✓ Fichier wrangler.toml mis à jour avec l'ID du KV Namespace: ${kvNamespaceId}`));
+      } else {
+        throw new Error("La mise à jour du fichier wrangler.toml a échoué");
       }
     } catch (error) {
-      console.error(chalk.red(`❌ Error updating wrangler.toml file: ${error.message}`));
-      console.log(chalk.yellow(`⚠️ Please manually update the wrangler.toml file with your KV Namespace ID: ${kvNamespaceId}`));
+      console.error(chalk.red(`❌ Erreur lors de la mise à jour du fichier wrangler.toml: ${error.message}`));
+      console.log(chalk.yellow(`⚠️ Veuillez mettre à jour manuellement le fichier wrangler.toml avec votre ID de KV Namespace: ${kvNamespaceId}`));
     }
   }
   
@@ -806,84 +843,59 @@ API_HOST_production = "https://api.example.com"
   // Update or create wrangler.toml file
   if (canWriteToFile) {
     try {
-      // Create complete content for the file
-      const wranglerTomlContent = `name = "microservices-secrets-manager"
-main = "src/index.js"
-compatibility_date = "2025-02-14"
-compatibility_flags = ["nodejs_compat"]
-
-# Account ID (IMPORTANT - DO NOT DELETE)
-account_id = "${accountId}"
-
-# KV Namespace binding for rate limiting
-[[kv_namespaces]]
-binding = "${kvNamespaceName}"
-id = "${kvNamespaceId}"
-
-# Environment variables (non-sensitive)
-[vars]
-# Example variable for development environment
-API_HOST_development = "https://api-dev.example.com"
-# Example variable for staging environment
-API_HOST_staging = "https://api-staging.example.com"
-# Example variable for production environment
-API_HOST_production = "https://api.example.com"
-`;
-  
-      // Write complete file (full replacement)
-      fs.writeFileSync(wranglerTomlPath, wranglerTomlContent, 'utf8');
-      console.log(chalk.green('✓ wrangler.toml file created/updated successfully.'));
+      const updateSuccess = updateWranglerToml({
+        account_id: accountId,
+        kv_namespace: {
+          binding: kvNamespaceName,
+          id: kvNamespaceId
+        }
+      });
       
-      // Verify that the file was correctly written
-      const verifyContent = fs.readFileSync(wranglerTomlPath, 'utf8');
-      if (verifyContent.includes(`account_id = "${accountId}"`)) {
-        console.log(chalk.green(`✓ Verification successful: Account ID ${accountId} correctly configured.`));
+      if (updateSuccess) {
+        console.log(chalk.green('✓ Fichier wrangler.toml créé/mis à jour avec succès.'));
+        
+        // Vérifier que le fichier a été correctement écrit
+        const verifyContent = fs.readFileSync(wranglerTomlPath, 'utf8');
+        if (verifyContent.includes(`account_id = "${accountId}"`)) {
+          console.log(chalk.green(`✓ Vérification réussie: ID de compte ${accountId} correctement configuré.`));
+        } else {
+          throw new Error("L'ID de compte n'a pas été correctement écrit dans le fichier.");
+        }
+        
+        // Vérifier que wrangler peut lire le fichier correctement
+        try {
+          console.log(chalk.blue('Vérification que wrangler peut lire le fichier correctement...'));
+          const wranglerOutput = execSync('wrangler whoami', { encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'] });
+          console.log(chalk.green('✓ wrangler peut accéder au fichier.'));
+        } catch (wranglerError) {
+          console.log(chalk.yellow(`⚠️ Avertissement: wrangler pourrait avoir des problèmes avec le fichier: ${wranglerError.message}`));
+        }
       } else {
-        throw new Error("Account ID not correctly written in file.");
-      }
-      
-      // Verify that wrangler can read the file correctly
-      try {
-        console.log(chalk.blue('Verifying that wrangler can read the file correctly...'));
-        const wranglerOutput = execSync('wrangler whoami', { encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'] });
-        console.log(chalk.green('✓ wrangler can access the file.'));
-      } catch (wranglerError) {
-        console.log(chalk.yellow(`⚠️ Warning: wrangler might have issues with the file: ${wranglerError.message}`));
+        throw new Error("La mise à jour du fichier wrangler.toml a échoué");
       }
     } catch (writeError) {
-      console.log(chalk.red(`❌ Error writing file: ${writeError.message}`));
+      console.log(chalk.red(`❌ Erreur lors de l'écriture du fichier: ${writeError.message}`));
       
-      // Create temporary file as fallback solution
+      // Créer un fichier temporaire comme solution de secours
       try {
         const tempPath = path.resolve(process.cwd(), 'wrangler.toml.new');
-        const wranglerTomlContent = `name = "microservices-secrets-manager"
-main = "src/index.js"
-compatibility_date = "2025-02-14"
-compatibility_flags = ["nodejs_compat"]
-
-# Account ID (IMPORTANT - DO NOT DELETE)
-account_id = "${accountId}"
-
-# KV Namespace binding for rate limiting
-[[kv_namespaces]]
-binding = "${kvNamespaceName}"
-id = "${kvNamespaceId}"
-
-# Environment variables (non-sensitive)
-[vars]
-# Example variable for development environment
-API_HOST_development = "https://api-dev.example.com"
-# Example variable for staging environment
-API_HOST_staging = "https://api-staging.example.com"
-# Example variable for production environment
-API_HOST_production = "https://api.example.com"
-`;
+        const existingConfig = parseWranglerToml();
+        const updatedConfig = {
+          ...existingConfig,
+          account_id: accountId,
+          kv_namespace: {
+            binding: kvNamespaceName,
+            id: kvNamespaceId
+          }
+        };
         
-        fs.writeFileSync(tempPath, wranglerTomlContent, 'utf8');
-        console.log(chalk.yellow(`✓ Temporary file created: ${tempPath}`));
-        console.log(chalk.yellow(`Please manually replace the content of wrangler.toml with this file.`));
+        const tomlContent = generateWranglerToml(updatedConfig);
         
-        // Ask user to confirm manual update
+        fs.writeFileSync(tempPath, tomlContent, 'utf8');
+        console.log(chalk.yellow(`✓ Fichier temporaire créé: ${tempPath}`));
+        console.log(chalk.yellow(`Veuillez remplacer manuellement le contenu de wrangler.toml avec ce fichier.`));
+        
+        // Demander à l'utilisateur de confirmer la mise à jour manuelle
         const { manualUpdate } = await inquirer.prompt([
           {
             type: 'confirm',
@@ -1025,28 +1037,22 @@ API_HOST_production = "https://api.example.com"
     // Update wrangler.toml with the new variables
     if (variables.length > 0) {
       try {
-        let tomlContent = fs.readFileSync(wranglerTomlPath, 'utf8');
+        const varsUpdate = {};
+        variables.forEach(v => {
+          varsUpdate[`${v.name}_${v.env}`] = v.value;
+        });
         
-        // Find the [vars] section
-        const varsIndex = tomlContent.indexOf('[vars]');
-        if (varsIndex !== -1) {
-          // Replace the example variables
-          const varsSection = '[vars]\n';
-          const newVarsSection = varsSection + variables.map(v => `${v.name}_${v.env} = "${v.value}"`).join('\n') + '\n';
-          
-          // Find the end of the [vars] section
-          const nextSectionIndex = tomlContent.indexOf('[', varsIndex + 1);
-          if (nextSectionIndex !== -1) {
-            tomlContent = tomlContent.substring(0, varsIndex) + newVarsSection + tomlContent.substring(nextSectionIndex);
-          } else {
-            tomlContent = tomlContent.substring(0, varsIndex) + newVarsSection;
-          }
-          
-          fs.writeFileSync(wranglerTomlPath, tomlContent);
-          console.log(chalk.green(`✓ Added ${variables.length} variables to wrangler.toml`));
+        const updateSuccess = updateWranglerToml({
+          vars: varsUpdate
+        });
+        
+        if (updateSuccess) {
+          console.log(chalk.green(`✓ ${variables.length} variables ajoutées à wrangler.toml`));
+        } else {
+          throw new Error("La mise à jour des variables dans wrangler.toml a échoué");
         }
       } catch (error) {
-        console.log(chalk.red(`Failed to update variables in wrangler.toml: ${error.message}`));
+        console.log(chalk.red(`Échec de la mise à jour des variables dans wrangler.toml: ${error.message}`));
       }
     }
   }
