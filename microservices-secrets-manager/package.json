@@ -10,7 +10,7 @@
     "wizard": "npm install && node src/setupWizard.js"
   },
   "devDependencies": {
-    "wrangler": "^3.109.2"
+    "wrangler": "^4.15.1"
   },
   "type": "module",
   "dependencies": {
