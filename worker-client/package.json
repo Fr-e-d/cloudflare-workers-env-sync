@@ -12,7 +12,7 @@
     "apply-secrets:prod": "npm install && node src/configs/setSecrets.js --env production"
   },
   "devDependencies": {
-    "wrangler": "^3.109.2"
+    "wrangler": "^4.15.1"
   },
   "type": "module",
   "dependencies": {
